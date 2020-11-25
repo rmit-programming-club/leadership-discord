@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use serenity::prelude::TypeMapKey;
 use std::sync::{Arc, RwLock};
 use std::sync::atomic::Ordering;
-use std::fs::{File};
+use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufRead, BufWriter, Write};
 
 #[group]
@@ -51,7 +51,30 @@ async fn main() {
 
 #[command]
 async fn getpoints(ctx: &Context, msg: &Message) -> CommandResult {
-    msg.reply(ctx, "Pong!").await?;
+    msg.reply(ctx, "Your points").await?;
+    let user_id = msg.author.id;
+
+    let mut scores: HashMap<String, i32> = HashMap::new();
+
+    {
+        let file = File::open(path).expect("Can't find the file");
+        let filereader = BufReader::new(file);
+        for mut line in filereader.lines() {
+            let ln: String = line.unwrap();
+            let tokens: Vec<&str> = ln.split(":").collect();
+
+            scores.insert(tokens[0].to_string(), i32::from(tokens[1].to_string().parse::<i32>().unwrap()));
+        }
+    }
+
+    if !scores.contains_key(user_id.to_string().as_str()) {
+        msg.reply(ctx, "You don't have any points").await?;
+    } else {
+        let curScore = *scores.get(&user_id.to_string()).unwrap();
+        let message : String = "You have ".to_owned() + &*curScore.to_string() + " points";
+        msg.reply(ctx, message).await?;
+        scores.insert(user_id.to_string(), curScore + 1);
+    }
 
     Ok(())
 }
@@ -83,18 +106,20 @@ async fn givepoint(ctx: &Context, msg: &Message) -> CommandResult {
         println!("{}:{}", key, value);
     }
 
-    let mut file = File::open(path).expect("cant find");
+    let mut file = OpenOptions::new().write(true).open(path).unwrap();
+
     let mut writer = BufWriter::new(file);
     for (key, value) in scores {
         // println!("{} / {}", key, value);
         //writeln!(&mut file,"{}:{}", key, value.to_string());
-        let out: String = key + ":" + &*value.to_string();
+        let out: String = key + ":" + &*value.to_string() + "\n";
         writer.write(out.as_bytes());
     }
 
     writer.flush().unwrap();
 
 
+    msg.reply(ctx, "Gave you a point!").await?;
 
     Ok(())
 }
