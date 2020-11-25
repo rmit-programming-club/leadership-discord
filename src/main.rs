@@ -17,9 +17,10 @@ use std::sync::{Arc, RwLock};
 use std::sync::atomic::Ordering;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufRead, BufWriter, Write};
+use serenity::model::id::RoleId;
 
 #[group]
-#[commands(getpoints, givepoint)]
+#[commands(getpoints, givepoints)]
 struct General;
 
 struct Handler;
@@ -80,9 +81,27 @@ async fn getpoints(ctx: &Context, msg: &Message) -> CommandResult {
 }
 
 #[command]
-async fn givepoint(ctx: &Context, msg: &Message) -> CommandResult {
+async fn givepoints(ctx: &Context, msg: &Message) -> CommandResult {
+
+    let permission: bool;
+    let msgMember = msg.member.to_owned();
+    let senderRoles = msgMember.unwrap().roles;
+
+    if(!senderRoles.contains(&RoleId(449076533223751691)) &&
+     !senderRoles.contains(&RoleId(778454540814909472))) {
+        return Ok(())
+    }
+
+    println!("{}", msg.content);
+    //get args
+    let mut content = msg.content.to_string();
+    content.remove(0);
+    let sections: Vec<&str> = content.split_ascii_whitespace().collect();
+    let user_id = sections[1].to_string();
+    let amt = sections[2].parse::<i32>().unwrap();
+
+
     println!("Command");
-    let user_id = msg.author.id;
     let mut scores: HashMap<String, i32> = HashMap::new();
 
     {
@@ -97,10 +116,10 @@ async fn givepoint(ctx: &Context, msg: &Message) -> CommandResult {
     }
 
     if !scores.contains_key(user_id.to_string().as_str()) {
-        scores.insert(user_id.to_string(), 0);
+        scores.insert(user_id.to_string(), amt);
     } else {
         let curScore = *scores.get(&user_id.to_string()).unwrap();
-        scores.insert(user_id.to_string(), curScore + 1);
+        scores.insert(user_id.to_string(), curScore + amt);
     }
     for (key, value) in &scores {
         println!("{}:{}", key, value);
@@ -118,8 +137,17 @@ async fn givepoint(ctx: &Context, msg: &Message) -> CommandResult {
 
     writer.flush().unwrap();
 
+    let output = "Gave ".to_owned() + &user_id + " " + amt.to_string().as_str() + " points!";
+    msg.channel_id.send_message(&ctx, |m| {
+        m.content("");
+        m.embed(|mut e| {
+            e.title("Given points!");
+            e.description(output);
 
-    msg.reply(ctx, "Gave you a point!").await?;
+            e
+        });
+        m
+    }).await?;
 
     Ok(())
 }
