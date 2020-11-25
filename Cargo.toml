@@ -1,0 +1,10 @@
+[package]
+name = "leadershipdiscordbot-rs"
+version = "0.1.0"
+authors = ["Rat Girl <chloeholmes8192@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serenity = "0.9"
