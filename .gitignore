@@ -1,3 +1,5 @@
 /target
 /.idea
 leadership-discord.iml
+.env
+scores.txt

@@ -11,15 +11,23 @@ use serenity::framework::standard::{
 };
 
 use std::env;
+use std::collections::HashMap;
+use serenity::prelude::TypeMapKey;
+use std::sync::{Arc, RwLock};
+use std::sync::atomic::Ordering;
+use std::fs::{File};
+use std::io::{BufReader, BufRead, BufWriter, Write};
 
 #[group]
-#[commands(ping)]
+#[commands(getpoints, givepoint)]
 struct General;
 
 struct Handler;
 
 #[async_trait]
 impl EventHandler for Handler {}
+
+const path: &str = "scores.txt";
 
 #[tokio::main]
 async fn main() {
@@ -42,8 +50,51 @@ async fn main() {
 }
 
 #[command]
-async fn ping(ctx: &Context, msg: &Message) -> CommandResult {
+async fn getpoints(ctx: &Context, msg: &Message) -> CommandResult {
     msg.reply(ctx, "Pong!").await?;
+
+    Ok(())
+}
+
+#[command]
+async fn givepoint(ctx: &Context, msg: &Message) -> CommandResult {
+    println!("Command");
+    let user_id = msg.author.id;
+    let mut scores: HashMap<String, i32> = HashMap::new();
+
+    {
+        let file = File::open(path).expect("Can't find the file");
+        let filereader = BufReader::new(file);
+        for mut line in filereader.lines() {
+            let ln: String = line.unwrap();
+            let tokens: Vec<&str> = ln.split(":").collect();
+
+            scores.insert(tokens[0].to_string(), i32::from(tokens[1].to_string().parse::<i32>().unwrap()));
+        }
+    }
+
+    if !scores.contains_key(user_id.to_string().as_str()) {
+        scores.insert(user_id.to_string(), 0);
+    } else {
+        let curScore = *scores.get(&user_id.to_string()).unwrap();
+        scores.insert(user_id.to_string(), curScore + 1);
+    }
+    for (key, value) in &scores {
+        println!("{}:{}", key, value);
+    }
+
+    let mut file = File::open(path).expect("cant find");
+    let mut writer = BufWriter::new(file);
+    for (key, value) in scores {
+        // println!("{} / {}", key, value);
+        //writeln!(&mut file,"{}:{}", key, value.to_string());
+        let out: String = key + ":" + &*value.to_string();
+        writer.write(out.as_bytes());
+    }
+
+    writer.flush().unwrap();
+
+
 
     Ok(())
 }
