@@ -12,9 +12,6 @@ use serenity::framework::standard::{
 
 use std::env;
 use std::collections::HashMap;
-use serenity::prelude::TypeMapKey;
-use std::sync::{Arc, RwLock};
-use std::sync::atomic::Ordering;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufRead, BufWriter, Write};
 
@@ -27,7 +24,7 @@ struct Handler;
 #[async_trait]
 impl EventHandler for Handler {}
 
-const path: &str = "scores.txt";
+const PATH: &str = "scores.txt";
 
 #[tokio::main]
 async fn main() {
@@ -57,9 +54,9 @@ async fn getpoints(ctx: &Context, msg: &Message) -> CommandResult {
     let mut scores: HashMap<String, i32> = HashMap::new();
 
     {
-        let file = File::open(path).expect("Can't find the file");
+        let file = File::open(PATH).expect("Can't find the file");
         let filereader = BufReader::new(file);
-        for mut line in filereader.lines() {
+        for line in filereader.lines() {
             let ln: String = line.unwrap();
             let tokens: Vec<&str> = ln.split(":").collect();
 
@@ -70,10 +67,10 @@ async fn getpoints(ctx: &Context, msg: &Message) -> CommandResult {
     if !scores.contains_key(user_id.to_string().as_str()) {
         msg.reply(ctx, "You don't have any points").await?;
     } else {
-        let curScore = *scores.get(&user_id.to_string()).unwrap();
-        let message : String = "You have ".to_owned() + &*curScore.to_string() + " points";
+        let cur_score = *scores.get(&user_id.to_string()).unwrap();
+        let message : String = "You have ".to_owned() + &*cur_score.to_string() + " points";
         msg.reply(ctx, message).await?;
-        scores.insert(user_id.to_string(), curScore + 1);
+        scores.insert(user_id.to_string(), cur_score + 1);
     }
 
     Ok(())
@@ -86,9 +83,9 @@ async fn givepoint(ctx: &Context, msg: &Message) -> CommandResult {
     let mut scores: HashMap<String, i32> = HashMap::new();
 
     {
-        let file = File::open(path).expect("Can't find the file");
+        let file = File::open(PATH).expect("Can't find the file");
         let filereader = BufReader::new(file);
-        for mut line in filereader.lines() {
+        for line in filereader.lines() {
             let ln: String = line.unwrap();
             let tokens: Vec<&str> = ln.split(":").collect();
 
@@ -99,21 +96,21 @@ async fn givepoint(ctx: &Context, msg: &Message) -> CommandResult {
     if !scores.contains_key(user_id.to_string().as_str()) {
         scores.insert(user_id.to_string(), 0);
     } else {
-        let curScore = *scores.get(&user_id.to_string()).unwrap();
-        scores.insert(user_id.to_string(), curScore + 1);
+        let cur_score = *scores.get(&user_id.to_string()).unwrap();
+        scores.insert(user_id.to_string(), cur_score + 1);
     }
     for (key, value) in &scores {
         println!("{}:{}", key, value);
     }
 
-    let mut file = OpenOptions::new().write(true).open(path).unwrap();
+    let file = OpenOptions::new().write(true).open(PATH).unwrap();
 
     let mut writer = BufWriter::new(file);
     for (key, value) in scores {
         // println!("{} / {}", key, value);
         //writeln!(&mut file,"{}:{}", key, value.to_string());
         let out: String = key + ":" + &*value.to_string() + "\n";
-        writer.write(out.as_bytes());
+        writer.write(out.as_bytes()).unwrap();
     }
 
     writer.flush().unwrap();
