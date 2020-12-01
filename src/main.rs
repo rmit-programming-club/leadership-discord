@@ -12,10 +12,11 @@ use serenity::framework::standard::{
 
 use std::env;
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufRead, BufWriter, Write};
 use serenity::model::id::{RoleId, UserId};
 use serenity::static_assertions::_core::str::FromStr;
+use rusoto_core::Region;
+use rusoto_dynamodb::{DynamoDb, DynamoDbClient, PutItemInput, GetItemInput, AttributeValue};
+
 
 #[group]
 #[commands(getpoints, givepoints)]
@@ -26,7 +27,6 @@ struct Handler;
 #[async_trait]
 impl EventHandler for Handler {}
 
-const PATH: &str = "scores.txt";
 
 #[tokio::main]
 async fn main() {
@@ -79,50 +79,79 @@ async fn getpoints(ctx: &Context, msg: &Message) -> CommandResult {
         }
     }
 
-    let mut scores: HashMap<String, i64> = HashMap::new();
+    match get_points(&user_id).await {
+        Ok(points) => {
+            msg.channel_id.send_message(&ctx, |m| {
+                m.content("");
+                m.embed(|e| {
+                    e.title(username + "'s points");
+                    e.description(points.to_string());
 
-    {
-        let file = File::open(PATH).expect("Can't find the file");
-        let filereader = BufReader::new(file);
-        for line in filereader.lines() {
-            let ln: String = line.unwrap();
-            let tokens: Vec<&str> = ln.split(":").collect();
-
-            scores.insert(tokens[0].to_string(), i64::from(tokens[1].to_string().parse::<i64>().unwrap()));
+                    e
+                });
+                m
+            }).await?;
+        }
+        ,
+        Err(err) => {
+            println!("Error: {:?}", err);
         }
     }
 
-    if !scores.contains_key(user_id.to_string().as_str()) {
-        msg.channel_id.send_message(&ctx, |m| {
-            m.content("");
-            m.embed(|e| {
-                e.title("Point Count");
-                e.description("User ".to_owned() + &username + " doesn't have any points");
-
-                e
-            });
-            m
-        }).await?;
-
-    } else {
-        let cur_score = *scores.get(&user_id.to_string()).unwrap();
-        let message : String = username.as_str().to_owned() + " has " + &*cur_score.to_string() + " points";
-
-        msg.channel_id.send_message(&ctx, |m| {
-            m.content("");
-            m.embed(|e| {
-                e.title("Point Count");
-                e.description(message);
-
-                e
-            });
-            m
-        }).await?;
-
-        scores.insert(user_id.to_string(), cur_score + 1);
-    }
-
     Ok(())
+}
+
+async fn get_points(user_id: &str) -> Result<i64, String> {
+    let client = DynamoDbClient::new(Region::UsEast1);
+    let mut get_item_input: GetItemInput = Default::default();
+    let mut key: HashMap<String, AttributeValue> = HashMap::new();
+    let mut key_val: AttributeValue = Default::default();
+    key_val.s = Some(user_id.to_string());
+
+    key.insert("discord_id".to_string(), key_val);
+    get_item_input.key = key;
+    get_item_input.table_name = "TPCMemberPoints".to_string();
+
+    match client.get_item(get_item_input).await {
+        Ok(output) => 
+            match output.item {
+                Some(item) => {
+                    let points = item["points"].n.as_ref().unwrap();
+
+                    Ok(points.parse::<i64>().unwrap())
+                }
+                None => {
+                    Ok(0)
+                }
+        },
+        Err(err) =>
+            Err(err.to_string())
+    }
+}
+
+async fn set_points(user_id: &str, points: i64) -> Result<i64, String> {
+    let client = DynamoDbClient::new(Region::UsEast1);
+    let mut put_item_input : PutItemInput = Default::default();
+    let mut new_item: HashMap<String, AttributeValue> = HashMap::new();
+    let mut key: AttributeValue = Default::default();
+    key.s = Some(user_id.to_string());
+
+    let mut points_attr: AttributeValue = Default::default();
+    points_attr.n = Some(points.to_string());
+
+    new_item.insert("discord_id".to_string(), key);
+    new_item.insert("points".to_string(), points_attr);
+    put_item_input.item = new_item;
+    put_item_input.table_name = "TPCMemberPoints".to_string();
+
+    match client.put_item(put_item_input).await {
+        Ok(_) => {
+            Ok(points)
+        },
+        Err(err) =>
+            Err(err.to_string())
+        
+    }
 }
 
 #[command]
@@ -144,54 +173,32 @@ async fn givepoints(ctx: &Context, msg: &Message) -> CommandResult {
     let user_id = sections[1].to_string();
     let amt = sections[2].parse::<i64>().unwrap();
 
+    match get_points(&user_id).await {
+        Ok(points) => {
+            let new_points = points + amt;
+            match set_points(&user_id, new_points).await {
+                Ok(_) => {
+                    let output = "Gave ".to_owned() + &user_id + " " + amt.to_string().as_str() + " points!";
+                    msg.channel_id.send_message(&ctx, |m| {
+                        m.content("");
+                        m.embed(|e| {
+                            e.title("Given points!");
+                            e.description(output);
 
-    println!("Command");
-    let mut scores: HashMap<String, i64> = HashMap::new();
-
-    {
-        let file = File::open(PATH).expect("Can't find the file");
-        let filereader = BufReader::new(file);
-        for line in filereader.lines() {
-            let ln: String = line.unwrap();
-            let tokens: Vec<&str> = ln.split(":").collect();
-
-            scores.insert(tokens[0].to_string(), i64::from(tokens[1].to_string().parse::<i64>().unwrap()));
+                            e
+                        });
+                        m
+                    }).await?;
+                },
+                Err(err) => {
+                    println!("Error: {:?}", err);
+                }
+            }
+        },
+        Err(err) => {
+            println!("Error: {:?}", err);
         }
-    }
-
-    if !scores.contains_key(user_id.to_string().as_str()) {
-        scores.insert(user_id.to_string(), amt);
-    } else {
-        let cur_score = *scores.get(&user_id.to_string()).unwrap();
-        scores.insert(user_id.to_string(), cur_score + amt);
-    }
-    for (key, value) in &scores {
-        println!("{}:{}", key, value);
-    }
-
-    let file = OpenOptions::new().write(true).open(PATH).unwrap();
-
-    let mut writer = BufWriter::new(file);
-    for (key, value) in scores {
-        // println!("{} / {}", key, value);
-        //writeln!(&mut file,"{}:{}", key, value.to_string());
-        let out: String = key + ":" + &*value.to_string() + "\n";
-        writer.write(out.as_bytes()).unwrap();
-    }
-
-    writer.flush().unwrap();
-
-    let output = "Gave ".to_owned() + &user_id + " " + amt.to_string().as_str() + " points!";
-    msg.channel_id.send_message(&ctx, |m| {
-        m.content("");
-        m.embed(|e| {
-            e.title("Given points!");
-            e.description(output);
-
-            e
-        });
-        m
-    }).await?;
+    };
 
     Ok(())
 }

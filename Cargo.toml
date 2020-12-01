@@ -13,3 +13,5 @@ edition = "2018"
 [dependencies]
 serenity = "0.9.1"
 tokio = "0.2"
+rusoto_core = "0.45.0"
+rusoto_dynamodb = "0.45.0"
