@@ -1,3 +1,4 @@
+
 use serenity::async_trait;
 use serenity::client::{Client, Context, EventHandler};
 use serenity::model::channel::Message;
@@ -16,10 +17,11 @@ use serenity::model::id::{RoleId, UserId};
 use serenity::static_assertions::_core::str::FromStr;
 use rusoto_core::Region;
 use rusoto_dynamodb::{DynamoDb, DynamoDbClient, PutItemInput, GetItemInput, AttributeValue, ScanInput};
+use shell_words::split;
 
 
 #[group]
-#[commands(getpoints, givepoints, givegems, store)]
+#[commands(getpoints, givepoints, givegems, store, addstore, buy)]
 struct General;
 
 struct Handler;
@@ -136,7 +138,7 @@ async fn get_profile(user_id: &str) -> Result<Profile, String> {
 }
 
 fn show_points(profile: Profile) -> String {
-    profile.credits.to_string() + " points\n" + &profile.points.to_string() + " gems"
+    profile.points.to_string() + " points\n" + &profile.credits.to_string() + " gems"
 }
 
 async fn set_profile(user_id: &str, profile: Profile) -> Result<Profile, String> {
@@ -276,6 +278,16 @@ struct Product {
   description: String
 }
 
+fn item_to_product(item: &HashMap<String, AttributeValue>) -> Product {
+    let empty_str : String = "".to_string();
+    let name = item["name"].s.as_ref().unwrap_or(&empty_str);
+    let price = item["price"].n.as_ref().unwrap_or(&"0".to_string()).parse::<i64>().unwrap_or(0);
+    let quantity = item["quantity"].n.as_ref().unwrap_or(&"0".to_string()).parse::<i64>().unwrap_or(0);
+    let key = item["key"].s.as_ref().unwrap_or(&empty_str);
+    let description = item["description"].s.as_ref().unwrap_or(&empty_str);
+    Product { name: name.to_string(), price, key: key.to_string(), description: description.to_string(), quantity }
+}
+
 async fn get_store() -> Result<Vec<Product>,String> {
     let client = DynamoDbClient::new(Region::UsEast1);
     let mut scan_input: ScanInput = Default::default();
@@ -286,21 +298,73 @@ async fn get_store() -> Result<Vec<Product>,String> {
         Ok(output) => 
             match output.items {
                 Some(items) => {
-                    let products = items.iter().map(|item| {
-                        let empty_str : String = "".to_string();
-                        let name = item["name"].s.as_ref().unwrap_or(&empty_str);
-                        let price = item["price"].n.as_ref().unwrap_or(&"0".to_string()).parse::<i64>().unwrap_or(0);
-                        let quantity = item["quantity"].n.as_ref().unwrap_or(&"0".to_string()).parse::<i64>().unwrap_or(0);
-                        let key = item["key"].s.as_ref().unwrap_or(&empty_str);
-                        let description = item["description"].s.as_ref().unwrap_or(&empty_str);
-                        Product { name: name.to_string(), price, key: key.to_string(), description: description.to_string(), quantity }
-                    }).collect();
+                    let products = items.iter().map(item_to_product).collect();
                     Ok(products)
                 }
                 None => {
                     Ok(Vec::new())
                 }
         },
+        Err(err) =>
+            Err(err.to_string())
+    }
+}
+
+async fn get_product(product_key: &str) -> Result<Option<Product>, String> {
+    let client = DynamoDbClient::new(Region::UsEast1);
+    let mut get_item_input: GetItemInput = Default::default();
+    let mut key: HashMap<String, AttributeValue> = HashMap::new();
+
+    key.insert("key".to_string(), string_attr(&product_key.to_string()));
+    get_item_input.key = key;
+    get_item_input.table_name = "TPCStore".to_string();
+
+    match client.get_item(get_item_input).await {
+        Ok(output) => 
+            match output.item {
+                Some(item) => {
+                    Ok(Some(item_to_product(&item)))
+                }
+                None => {
+                    Ok(None)
+                }
+        },
+        Err(err) =>
+            Err(err.to_string())
+    }
+}
+
+fn string_attr(string: &String) -> AttributeValue {
+    let mut attr: AttributeValue = Default::default();
+    attr.s = Some(string.to_string());
+    attr
+}
+
+fn number_attr(number: &i64) -> AttributeValue {
+    let mut attr: AttributeValue = Default::default();
+    attr.n = Some(number.to_string());
+    attr
+}
+
+async fn put_product(product: Product) -> Result<Product,String> {
+    let client = DynamoDbClient::new(Region::UsEast1);
+    let mut put_item_input: PutItemInput = Default::default();
+    
+    let mut new_item: HashMap<String, AttributeValue> = HashMap::new();
+
+    new_item.insert("key".to_string(), string_attr(&product.key));
+    new_item.insert("name".to_string(), string_attr(&product.name));
+    new_item.insert("description".to_string(), string_attr(&product.description));
+    new_item.insert("price".to_string(), number_attr(&product.price));
+    new_item.insert("quantity".to_string(), number_attr(&product.quantity));
+
+    put_item_input.table_name = "TPCStore".to_string();
+    put_item_input.item = new_item;
+
+    match client.put_item(put_item_input).await {
+        Ok(_) => 
+            Ok(product)
+        ,
         Err(err) =>
             Err(err.to_string())
     }
@@ -331,6 +395,119 @@ async fn store(ctx: &Context, msg: &Message) -> CommandResult {
         Err(err) => {
             println!("Error: {:?}", err);
         }
+    };
+    Ok(())
+}
+
+#[command]
+async fn addstore(ctx: &Context, msg: &Message) -> CommandResult {
+
+    if !message_from_admin(msg){
+        return Ok(())
+    }
+
+    //get args
+    let mut content = msg.content.to_string();
+    content.remove(0);
+    let sections: Vec<String> = split(&content).ok().unwrap();
+    match ( sections.get(1)
+          , sections.get(2)
+          , sections.get(3)
+          , sections.get(4).and_then(|x| x.parse::<i64>().ok())
+          , sections.get(5).and_then(|x| x.parse::<i64>().ok())
+          ) {
+        (Some(key), Some(name), Some(description), Some(price), Some(quantity)) => {
+            match put_product(Product { key: key.to_string(), name: name.to_string(), description: description.to_string(), price, quantity }).await {
+                Ok(product) => {
+                    msg.channel_id.send_message(&ctx, |m| {
+                        m.content("");
+                        m.embed(|e| {
+                            e.title("Added Product");
+                            let message = format!("{}: {} ({} gems, {} left)\n{}",product.key, product.name, product.price, product.quantity, product.description);
+                            e.description(message);
+                            e
+                        });
+                        m
+                    }).await?;
+                },
+                Err(err) => {
+                    println!("Error: {:?}", err);
+                }
+            }
+        },
+        _ => {}
+    };
+    Ok(())
+}
+
+#[command]
+async fn buy(ctx: &Context, msg: &Message) -> CommandResult {
+
+    //get args
+    let content = msg.content.to_string();
+
+    let sections: Vec<String> = split(&content).ok().unwrap();
+    match sections.get(1) {
+        Some(key) => {
+            let profile = get_profile(&msg.author.id.to_string()).await.ok();
+            let product = get_product(&key).await.ok();
+            match (profile, product) {
+                (Some(profile), Some(Some(product))) => {
+                    if profile.credits >= product.price {
+                        if product.quantity > 0 {
+                            let new_credits = profile.credits - product.price;
+                            let new_quantity = product.quantity - 1;
+                            let new_product = put_product(Product { name: product.name
+                                                , description: product.description
+                                                , key: product.key
+                                                , price: product.price
+                                                , quantity: new_quantity
+                                                }
+                                        ).await?;
+                            let new_profile = set_profile( &msg.author.id.to_string()
+                                       , Profile { points: profile.points
+                                                , credits: new_credits
+                                                }
+                                                ).await?;
+                            msg.channel_id.send_message(&ctx, |m| {
+                                m.content("");
+                                m.embed(|e| {
+                                    e.title("Purchase successful");
+                                    e.description(format!("You just purchased a {}\nYou have {} gems left", new_product.name, new_profile.credits));
+                                    e
+                                });
+                                m
+                            }).await?;
+
+                        }
+                        else{
+                            msg.channel_id.send_message(&ctx, |m| {
+                                m.content("");
+                                m.embed(|e| {
+                                    e.title("Out of stock");
+                                    e.description(format!("Sorry, we don't have any more of: {}", product.name));
+                                    e
+                                });
+                                m
+                            }).await?;
+                        }
+                    }
+                    else {
+                        msg.channel_id.send_message(&ctx, |m| {
+                            m.content("");
+                            m.embed(|e| {
+                                e.title("You can't afford that!");
+                                e.description(format!("You only have {} gems, but \"{}\" costs {} gems", profile.credits, product.name, product.price));
+                                e
+                            });
+                            m
+                        }).await?;
+                    }
+                }
+                _ => {}
+            }
+        },
+        _ => {}
     };
     Ok(())
 }
