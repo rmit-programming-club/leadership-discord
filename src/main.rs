@@ -16,12 +16,12 @@ use std::collections::HashMap;
 use serenity::model::id::{RoleId, UserId};
 use serenity::static_assertions::_core::str::FromStr;
 use rusoto_core::Region;
-use rusoto_dynamodb::{DynamoDb, DynamoDbClient, PutItemInput, GetItemInput, AttributeValue, ScanInput};
+use rusoto_dynamodb::{DynamoDb, DynamoDbClient, PutItemInput, GetItemInput, AttributeValue, ScanInput, DeleteItemInput};
 use shell_words::split;
 
 
 #[group]
-#[commands(getpoints, givepoints, givegems, store, addstore, buy)]
+#[commands(getpoints, givepoints, givegems, store, addproduct, buy, delproduct)]
 struct General;
 
 struct Handler;
@@ -346,6 +346,22 @@ fn number_attr(number: &i64) -> AttributeValue {
     attr
 }
 
+async fn delete_product(key: &str) -> Result<String,String> {
+    let client = DynamoDbClient::new(Region::UsEast1);
+    let mut delete_item_input: DeleteItemInput = Default::default();
+    
+    let mut delete_key: HashMap<String, AttributeValue> = HashMap::new();
+    delete_key.insert("key".to_string(), string_attr(&key.to_string()));
+
+    delete_item_input.table_name = "TPCStore".to_string();
+    delete_item_input.key = delete_key;
+
+    match client.delete_item(delete_item_input).await {
+        Ok(_) => Ok(key.to_string()),
+        Err(err) => Err(err.to_string())
+    }
+}
+
 async fn put_product(product: Product) -> Result<Product,String> {
     let client = DynamoDbClient::new(Region::UsEast1);
     let mut put_item_input: PutItemInput = Default::default();
@@ -400,7 +416,7 @@ async fn store(ctx: &Context, msg: &Message) -> CommandResult {
 }
 
 #[command]
-async fn addstore(ctx: &Context, msg: &Message) -> CommandResult {
+async fn addproduct(ctx: &Context, msg: &Message) -> CommandResult {
 
     if !message_from_admin(msg){
         return Ok(())
@@ -424,6 +440,41 @@ async fn addstore(ctx: &Context, msg: &Message) -> CommandResult {
                         m.embed(|e| {
                             e.title("Added Product");
                             let message = format!("{}: {} ({} gems, {} left)\n{}",product.key, product.name, product.price, product.quantity, product.description);
+                            e.description(message);
+                            e
+                        });
+                        m
+                    }).await?;
+                },
+                Err(err) => {
+                    println!("Error: {:?}", err);
+                }
+            }
+        },
+        _ => {}
+    };
+    Ok(())
+}
+
+#[command]
+async fn delproduct(ctx: &Context, msg: &Message) -> CommandResult {
+
+    if !message_from_admin(msg){
+        return Ok(())
+    }
+
+    //get args
+    let content = msg.content.to_string();
+    let sections: Vec<String> = split(&content).ok().unwrap();
+    match sections.get(1) {
+        Some(key) => {
+            match delete_product(&key).await {
+                Ok(_) => {
+                    msg.channel_id.send_message(&ctx, |m| {
+                        m.content("");
+                        m.embed(|e| {
+                            e.title("Deleted Product");
+                            let message = format!("Deleted product {}", key);
                             e.description(message);
                             e
                         });
