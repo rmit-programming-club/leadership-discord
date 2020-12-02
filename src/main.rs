@@ -142,7 +142,7 @@ async fn get_profile(user_id: &str) -> Result<Profile, String> {
 }
 
 fn show_points(profile: Profile) -> String {
-    profile.points.to_string() + " points\n" + &profile.credits.to_string() + " gems"
+    format!("{} :star:\n{} :gem:", profile.points, profile.credits)
 }
 
 async fn set_profile(user_id: &str, profile: Profile) -> Result<Profile, String> {
@@ -394,6 +394,10 @@ async fn put_product(product: Product) -> Result<Product,String> {
     }
 }
 
+fn show_product(product: &Product) -> String {
+    format!("`{}`: **{}** ({} :gem:, {} left)\n{}",product.key, product.name, product.price, product.quantity, product.description)
+}
+
 #[command]
 async fn store(ctx: &Context, msg: &Message) -> CommandResult {
 
@@ -405,9 +409,9 @@ async fn store(ctx: &Context, msg: &Message) -> CommandResult {
             msg.channel_id.send_message(&ctx, |m| {
                 m.content("");
                 m.embed(|e| {
-                    e.title("Products: ");
+                    e.title("Store: ");
                     let product_lines : Vec<String> = products.iter().map(|product| {
-                        format!("{}: {} ({} gems, {} left)\n{}",product.key, product.name, product.price, product.quantity, product.description)
+                        show_product(product)
                     }).collect();
                     let message : String = product_lines.join("\n\n");
                     e.description(message);
@@ -448,7 +452,7 @@ async fn addproduct(ctx: &Context, msg: &Message) -> CommandResult {
                         m.content("");
                         m.embed(|e| {
                             e.title("Added Product");
-                            let message = format!("{}: {} ({} gems, {} left)\n{}",product.key, product.name, product.price, product.quantity, product.description);
+                            let message = show_product(&product);
                             e.description(message);
                             e
                         });
@@ -541,7 +545,7 @@ async fn buy(ctx: &Context, msg: &Message) -> CommandResult {
                                 m.content("");
                                 m.embed(|e| {
                                     e.title("Purchase successful");
-                                    e.description(format!("You just purchased a {}\nYou have {} gems left", new_product.name, new_profile.credits));
+                                    e.description(format!("You just purchased a {}\nYou have {} :gem: left", new_product.name, new_profile.credits));
                                     e
                                 });
                                 m
@@ -565,7 +569,7 @@ async fn buy(ctx: &Context, msg: &Message) -> CommandResult {
                             m.content("");
                             m.embed(|e| {
                                 e.title("You can't afford that!");
-                                e.description(format!("You only have {} gems, but \"{}\" costs {} gems", profile.credits, product.name, product.price));
+                                e.description(format!("You only have {} :gem:, but \"{}\" costs {} :gem:", profile.credits, product.name, product.price));
                                 e
                             });
                             m
