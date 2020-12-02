@@ -15,11 +15,11 @@ use std::collections::HashMap;
 use serenity::model::id::{RoleId, UserId};
 use serenity::static_assertions::_core::str::FromStr;
 use rusoto_core::Region;
-use rusoto_dynamodb::{DynamoDb, DynamoDbClient, PutItemInput, GetItemInput, AttributeValue};
+use rusoto_dynamodb::{DynamoDb, DynamoDbClient, PutItemInput, GetItemInput, AttributeValue, ScanInput};
 
 
 #[group]
-#[commands(getpoints, givepoints)]
+#[commands(getpoints, givepoints, givegems, store)]
 struct General;
 
 struct Handler;
@@ -79,13 +79,13 @@ async fn getpoints(ctx: &Context, msg: &Message) -> CommandResult {
         }
     }
 
-    match get_points(&user_id).await {
-        Ok(points) => {
+    match get_profile(&user_id).await {
+        Ok(profile) => {
             msg.channel_id.send_message(&ctx, |m| {
                 m.content("");
                 m.embed(|e| {
                     e.title(username + "'s points");
-                    e.description(points.to_string());
+                    e.description(show_points(profile));
 
                     e
                 });
@@ -101,7 +101,12 @@ async fn getpoints(ctx: &Context, msg: &Message) -> CommandResult {
     Ok(())
 }
 
-async fn get_points(user_id: &str) -> Result<i64, String> {
+struct Profile {
+  points: i64,
+  credits: i64
+}
+
+async fn get_profile(user_id: &str) -> Result<Profile, String> {
     let client = DynamoDbClient::new(Region::UsEast1);
     let mut get_item_input: GetItemInput = Default::default();
     let mut key: HashMap<String, AttributeValue> = HashMap::new();
@@ -116,12 +121,13 @@ async fn get_points(user_id: &str) -> Result<i64, String> {
         Ok(output) => 
             match output.item {
                 Some(item) => {
-                    let points = item["points"].n.as_ref().unwrap();
+                    let points = item["points"].n.as_ref().unwrap_or(&"0".to_string()).parse::<i64>().unwrap_or(0);
+                    let credits = item["credits"].n.as_ref().unwrap_or(&"0".to_string()).parse::<i64>().unwrap_or(0);
 
-                    Ok(points.parse::<i64>().unwrap())
+                    Ok(Profile { points, credits })
                 }
                 None => {
-                    Ok(0)
+                    Ok(Profile { points: 0, credits: 0 })
                 }
         },
         Err(err) =>
@@ -129,7 +135,11 @@ async fn get_points(user_id: &str) -> Result<i64, String> {
     }
 }
 
-async fn set_points(user_id: &str, points: i64) -> Result<i64, String> {
+fn show_points(profile: Profile) -> String {
+    profile.credits.to_string() + " points\n" + &profile.points.to_string() + " gems"
+}
+
+async fn set_profile(user_id: &str, profile: Profile) -> Result<Profile, String> {
     let client = DynamoDbClient::new(Region::UsEast1);
     let mut put_item_input : PutItemInput = Default::default();
     let mut new_item: HashMap<String, AttributeValue> = HashMap::new();
@@ -137,16 +147,20 @@ async fn set_points(user_id: &str, points: i64) -> Result<i64, String> {
     key.s = Some(user_id.to_string());
 
     let mut points_attr: AttributeValue = Default::default();
-    points_attr.n = Some(points.to_string());
+    points_attr.n = Some(profile.points.to_string());
+
+    let mut credits_attr: AttributeValue = Default::default();
+    credits_attr.n = Some(profile.credits.to_string());
 
     new_item.insert("discord_id".to_string(), key);
     new_item.insert("points".to_string(), points_attr);
+    new_item.insert("credits".to_string(), credits_attr);
     put_item_input.item = new_item;
     put_item_input.table_name = "TPCMemberPoints".to_string();
 
     match client.put_item(put_item_input).await {
         Ok(_) => {
-            Ok(points)
+            Ok(profile)
         },
         Err(err) =>
             Err(err.to_string())
@@ -157,15 +171,10 @@ async fn set_points(user_id: &str, points: i64) -> Result<i64, String> {
 #[command]
 async fn givepoints(ctx: &Context, msg: &Message) -> CommandResult {
 
-    let msg_member = msg.member.to_owned();
-    let sender_roles = msg_member.unwrap().roles;
-
-    if !sender_roles.contains(&RoleId(449076533223751691)) &&
-     !sender_roles.contains(&RoleId(778454540814909472)) {
+    if !message_from_admin(msg){
         return Ok(())
     }
 
-    println!("{}", msg.content);
     //get args
     let mut content = msg.content.to_string();
     content.remove(0);
@@ -173,17 +182,16 @@ async fn givepoints(ctx: &Context, msg: &Message) -> CommandResult {
     let user_id = sections[1].to_string();
     let amt = sections[2].parse::<i64>().unwrap();
 
-    match get_points(&user_id).await {
-        Ok(points) => {
-            let new_points = points + amt;
-            match set_points(&user_id, new_points).await {
-                Ok(_) => {
-                    let output = "Gave ".to_owned() + &user_id + " " + amt.to_string().as_str() + " points!";
+    match get_profile(&user_id).await {
+        Ok(profile) => {
+            let new_points = profile.points + amt;
+            match set_profile(&user_id, Profile {points: new_points, credits: profile.credits }).await {
+                Ok(new_profile) => {
                     msg.channel_id.send_message(&ctx, |m| {
                         m.content("");
                         m.embed(|e| {
                             e.title("Given points!");
-                            e.description(output);
+                            e.description(show_points(new_profile));
 
                             e
                         });
@@ -200,5 +208,129 @@ async fn givepoints(ctx: &Context, msg: &Message) -> CommandResult {
         }
     };
 
+    Ok(())
+}
+
+fn message_from_admin(msg: &Message) -> bool {
+    match msg.member.to_owned() {
+        None => false,
+        Some(member) => {
+            member.roles.contains(&RoleId(449076533223751691)) ||
+             member.roles.contains(&RoleId(778454540814909472))
+
+        }
+    }
+
+}
+
+#[command]
+async fn givegems(ctx: &Context, msg: &Message) -> CommandResult {
+
+    if !message_from_admin(msg){
+        return Ok(())
+    }
+
+    //get args
+    let mut content = msg.content.to_string();
+    content.remove(0);
+    let sections: Vec<&str> = content.split_ascii_whitespace().collect();
+    match (sections.get(1), sections.get(2).and_then(|amt| amt.parse::<i64>().ok())){
+         (Some(user_id), Some(amt)) => {
+            match get_profile(&user_id).await {
+                Ok(profile) => {
+                    let new_credits = profile.credits + amt;
+                    match set_profile(&user_id, Profile {points: profile.points, credits: new_credits }).await {
+                        Ok(new_profile) => {
+                            msg.channel_id.send_message(&ctx, |m| {
+                                m.content("");
+                                m.embed(|e| {
+                                    e.title("Given gems!");
+                                    e.description(show_points(new_profile));
+
+                                    e
+                                });
+                                m
+                            }).await?;
+                        },
+                        Err(err) => {
+                            println!("Error: {:?}", err);
+                        }
+                    }
+                },
+                Err(err) => {
+                    println!("Error: {:?}", err);
+                }
+            };
+
+            Ok(())
+        },
+        _ => Ok(())
+    }
+}
+
+struct Product {
+  name: String,
+  price: i64,
+  quantity: i64,
+  key: String,
+  description: String
+}
+
+async fn get_store() -> Result<Vec<Product>,String> {
+    let client = DynamoDbClient::new(Region::UsEast1);
+    let mut scan_input: ScanInput = Default::default();
+
+    scan_input.table_name = "TPCStore".to_string();
+
+    match client.scan(scan_input).await {
+        Ok(output) => 
+            match output.items {
+                Some(items) => {
+                    let products = items.iter().map(|item| {
+                        let empty_str : String = "".to_string();
+                        let name = item["name"].s.as_ref().unwrap_or(&empty_str);
+                        let price = item["price"].n.as_ref().unwrap_or(&"0".to_string()).parse::<i64>().unwrap_or(0);
+                        let quantity = item["quantity"].n.as_ref().unwrap_or(&"0".to_string()).parse::<i64>().unwrap_or(0);
+                        let key = item["key"].s.as_ref().unwrap_or(&empty_str);
+                        let description = item["description"].s.as_ref().unwrap_or(&empty_str);
+                        Product { name: name.to_string(), price, key: key.to_string(), description: description.to_string(), quantity }
+                    }).collect();
+                    Ok(products)
+                }
+                None => {
+                    Ok(Vec::new())
+                }
+        },
+        Err(err) =>
+            Err(err.to_string())
+    }
+}
+
+#[command]
+async fn store(ctx: &Context, msg: &Message) -> CommandResult {
+
+    //get args
+    let mut content = msg.content.to_string();
+    content.remove(0);
+    match get_store().await {
+        Ok(products) => {
+            msg.channel_id.send_message(&ctx, |m| {
+                m.content("");
+                m.embed(|e| {
+                    e.title("Products: ");
+                    let product_lines : Vec<String> = products.iter().map(|product| {
+                        format!("{}: {} ({} gems, {} left)\n{}",product.key, product.name, product.price, product.quantity, product.description)
+                    }).collect();
+                    let message : String = product_lines.join("\n\n");
+                    e.description(message);
+                    e
+                });
+                m
+            }).await?;
+        },
+        Err(err) => {
+            println!("Error: {:?}", err);
+        }
+    };
     Ok(())
 }
