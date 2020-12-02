@@ -2,6 +2,7 @@
 use serenity::async_trait;
 use serenity::client::{Client, Context, EventHandler};
 use serenity::model::channel::Message;
+use serenity::Error;
 use serenity::framework::standard::{
     StandardFramework,
     CommandResult,
@@ -13,11 +14,12 @@ use serenity::framework::standard::{
 
 use std::env;
 use std::collections::HashMap;
-use serenity::model::id::{RoleId, UserId};
+use serenity::model::id::{RoleId, UserId, ChannelId};
 use serenity::static_assertions::_core::str::FromStr;
 use rusoto_core::Region;
 use rusoto_dynamodb::{DynamoDb, DynamoDbClient, PutItemInput, GetItemInput, AttributeValue, ScanInput, DeleteItemInput};
 use shell_words::split;
+use uuid::Uuid;
 
 
 #[group]
@@ -53,6 +55,8 @@ async fn main() {
 #[command]
 async fn getpoints(ctx: &Context, msg: &Message) -> CommandResult {
     let mut user_id = msg.author.id.to_string();
+
+    msg.channel_id.broadcast_typing(&ctx).await?;
 
     //get args
     let mut content = msg.content.to_string();
@@ -177,6 +181,8 @@ async fn givepoints(ctx: &Context, msg: &Message) -> CommandResult {
         return Ok(())
     }
 
+    msg.channel_id.broadcast_typing(&ctx).await?;
+
     //get args
     let mut content = msg.content.to_string();
     content.remove(0);
@@ -231,6 +237,8 @@ async fn givegems(ctx: &Context, msg: &Message) -> CommandResult {
     if !message_from_admin(msg){
         return Ok(())
     }
+
+    msg.channel_id.broadcast_typing(&ctx).await?;
 
     //get args
     let mut content = msg.content.to_string();
@@ -421,6 +429,7 @@ async fn addproduct(ctx: &Context, msg: &Message) -> CommandResult {
     if !message_from_admin(msg){
         return Ok(())
     }
+    msg.channel_id.broadcast_typing(&ctx).await?;
 
     //get args
     let mut content = msg.content.to_string();
@@ -462,6 +471,7 @@ async fn delproduct(ctx: &Context, msg: &Message) -> CommandResult {
     if !message_from_admin(msg){
         return Ok(())
     }
+    msg.channel_id.broadcast_typing(&ctx).await?;
 
     //get args
     let content = msg.content.to_string();
@@ -497,6 +507,7 @@ async fn buy(ctx: &Context, msg: &Message) -> CommandResult {
     //get args
     let content = msg.content.to_string();
 
+    msg.channel_id.broadcast_typing(&ctx).await?;
     let sections: Vec<String> = split(&content).ok().unwrap();
     match sections.get(1) {
         Some(key) => {
@@ -508,6 +519,10 @@ async fn buy(ctx: &Context, msg: &Message) -> CommandResult {
                         if product.quantity > 0 {
                             let new_credits = profile.credits - product.price;
                             let new_quantity = product.quantity - 1;
+                            let uuid = Uuid::new_v4().to_string();
+                            let new_purchase = Purchase { id: uuid, product_key: key.to_string(), discord_id: msg.author.id.to_string() };
+                            add_purchase(new_purchase).await?;
+
                             let new_product = put_product(Product { name: product.name
                                                 , description: product.description
                                                 , key: product.key
@@ -515,11 +530,13 @@ async fn buy(ctx: &Context, msg: &Message) -> CommandResult {
                                                 , quantity: new_quantity
                                                 }
                                         ).await?;
+
                             let new_profile = set_profile( &msg.author.id.to_string()
                                        , Profile { points: profile.points
                                                 , credits: new_credits
                                                 }
                                                 ).await?;
+
                             msg.channel_id.send_message(&ctx, |m| {
                                 m.content("");
                                 m.embed(|e| {
@@ -555,10 +572,55 @@ async fn buy(ctx: &Context, msg: &Message) -> CommandResult {
                         }).await?;
                     }
                 }
-                _ => {}
+                _ => {
+                    send_embed(&msg.channel_id, &ctx, "Cannot find product", "Could not find the product you are refering to").await?;
+                }
             }
         },
-        _ => {}
+        _ => {
+            send_embed(&msg.channel_id, &ctx, "Usage", "~buy [product_id]").await?;
+        }
     };
     Ok(())
+}
+
+async fn send_embed(channel_id: &ChannelId,ctx: &Context, title: &str, content: &str) -> Result<(), Error>{
+    channel_id.send_message(&ctx, |m| {
+        m.content("");
+        m.embed(|e| {
+            e.title(title);
+            e.description(content);
+            e
+        });
+        m
+    }).await?;
+    Ok(())
+}
+
+struct Purchase {
+  id: String,
+  product_key: String,
+  discord_id: String
+}
+
+async fn add_purchase(purchase: Purchase) -> Result<Purchase, String>{
+    let client = DynamoDbClient::new(Region::UsEast1);
+    let mut put_item_input: PutItemInput = Default::default();
+    
+    let mut new_item: HashMap<String, AttributeValue> = HashMap::new();
+
+    new_item.insert("id".to_string(), string_attr(&purchase.id));
+    new_item.insert("product_key".to_string(), string_attr(&purchase.product_key));
+    new_item.insert("discord_id".to_string(), string_attr(&purchase.discord_id));
+
+    put_item_input.table_name = "TPCPurchases".to_string();
+    put_item_input.item = new_item;
+
+    match client.put_item(put_item_input).await {
+        Ok(_) => 
+            Ok(purchase)
+        ,
+        Err(err) =>
+            Err(err.to_string())
+    }
 }
