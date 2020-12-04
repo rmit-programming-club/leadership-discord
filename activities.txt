@@ -1,0 +1,9 @@
+Attend an AWS re:Invent screening 10 points.
+
+Get certified with AWS! Ask an executive to sign you up for the 2020
+certification challenge for 100 points.
+
+Complete issues on these bots. Check out our [Github](https://github.com/rmit-programming-club)
+for our bots and their issues. Like [mine](https://github.com/rmit-programming-club/leadership-discord) (we all have issues and it's ok)!
+The amount of points varies depending on the issue's difficulty. This is a fantastic
+way to learn languages.

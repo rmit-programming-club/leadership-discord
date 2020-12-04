@@ -20,10 +20,12 @@ use rusoto_core::Region;
 use rusoto_dynamodb::{DynamoDb, DynamoDbClient, PutItemInput, GetItemInput, AttributeValue, ScanInput, DeleteItemInput};
 use shell_words::split;
 use uuid::Uuid;
+use std::fs::File;
+use std::io::prelude::*;
 
 
 #[group]
-#[commands(getpoints, givepoints, givegems, store, addproduct, buy, delproduct)]
+#[commands(getpoints, givepoints, givegems, store, addproduct, buy, delproduct, activities)]
 struct General;
 
 struct Handler;
@@ -627,4 +629,13 @@ async fn add_purchase(purchase: Purchase) -> Result<Purchase, String>{
         Err(err) =>
             Err(err.to_string())
     }
+}
+
+#[command]
+async fn activities(ctx: &Context, msg: &Message) -> CommandResult {
+    let mut file = File::open("activities.txt")?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    send_embed(&msg.channel_id, &ctx, "Current Activities", &contents).await?;
+    Ok(())
 }
