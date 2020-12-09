@@ -189,7 +189,10 @@ async fn givepoints(ctx: &Context, msg: &Message) -> CommandResult {
     let mut content = msg.content.to_string();
     content.remove(0);
     let sections: Vec<&str> = content.split_ascii_whitespace().collect();
-    let user_id = sections[1].to_string();
+    let mut user_id = sections[1].to_string();
+    if msg.mentions.len() > 0 {
+        user_id = msg.mentions[0].id.to_string();
+    };
     let amt = sections[2].parse::<i64>().unwrap();
 
     match get_profile(&user_id).await {
