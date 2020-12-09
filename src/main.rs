@@ -64,7 +64,11 @@ async fn getpoints(ctx: &Context, msg: &Message) -> CommandResult {
     let mut content = msg.content.to_string();
     content.remove(0);
     let sections: Vec<&str> = content.split_ascii_whitespace().collect();
-    if sections.len() > 1 {
+
+    if msg.mentions.len() > 0 {
+        user_id = msg.mentions[0].id.to_string();
+    }
+    else if sections.len() > 1 {
         user_id = sections[1].to_string();
     }
 
